@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>프로젝트 | 홍길동</title>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="logo" href="index.html" aria-label="홈으로 이동">홍길동</a>
+        <button class="menu-toggle" type="button" aria-label="메뉴 열기" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <nav class="site-nav" aria-label="주요 메뉴">
+          <a href="about.html">소개</a>
+          <a href="skills.html">기술</a>
+          <a class="active" href="projects.html">프로젝트</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="section page-hero">
+        <div class="container page-panel">
+          <p class="section-label">Projects</p>
+          <h1>학습한 내용을 작은 프로젝트로 정리합니다.</h1>
+          <p>프로젝트 정보는 JavaScript 데이터에서 자동으로 렌더링됩니다.</p>
+        </div>
+      </section>
+
+      <section class="section muted">
+        <div class="container">
+          <div id="project-list" class="project-grid" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p>&copy; 2026 홍길동. All rights reserved.</p>
+      </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+  </body>
+</html>
