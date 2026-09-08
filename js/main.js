@@ -1,88 +1,19 @@
-const projects = [
-  {
-    title: "개인 프로필 페이지",
-    description: "HTML, CSS, JavaScript를 사용해 만든 한 페이지 개인 포트폴리오입니다.",
-    tags: ["HTML", "CSS", "JavaScript"],
-    link: "https://github.com/example/profile-page",
-  },
-  {
-    title: "할 일 관리 앱",
-    description: "사용자가 할 일을 추가, 완료, 삭제할 수 있는 간단한 웹 앱입니다.",
-    tags: ["JavaScript", "DOM", "LocalStorage"],
-    link: "https://github.com/example/todo-app",
-  },
-  {
-    title: "반응형 랜딩 페이지",
-    description: "모바일과 데스크톱 화면에 맞춰 레이아웃이 변하는 웹 페이지입니다.",
-    tags: ["HTML", "CSS", "Responsive"],
-    link: "https://github.com/example/landing-page",
-  },
+const posts=[
+ {title:"좋은 코드는 읽는 사람을 배려한다",category:"개발",date:"2026. 09. 05",read:"6분",excerpt:"코드는 컴퓨터보다 사람이 더 자주 읽습니다. 협업하며 배운 읽기 좋은 코드의 작은 원칙들을 정리했습니다.",visual:"{ clean code }"},
+ {title:"사이드 프로젝트를 끝내는 방법",category:"개발",date:"2026. 08. 28",read:"8분",excerpt:"거창한 계획보다 완성의 경험이 중요합니다. 범위를 줄이고 끝까지 배포하기 위해 사용한 현실적인 방법들.",visual:"ship →"},
+ {title:"여름의 끝에서 발견한 것들",category:"일상",date:"2026. 08. 19",read:"4분",excerpt:"유난히 길었던 여름, 익숙한 동네를 천천히 걸으며 새롭게 보게 된 장면과 마음에 관한 기록입니다.",visual:"08 / 19"},
+ {title:"꾸준함에 재능이 필요한가요",category:"생각",date:"2026. 08. 11",read:"5분",excerpt:"매일 잘하는 대신 다시 돌아오는 연습. 꾸준함을 의지가 아닌 환경의 문제로 바라봅니다.",visual:"again."},
+ {title:"CSS Grid로 만드는 유연한 레이아웃",category:"개발",date:"2026. 07. 30",read:"7분",excerpt:"복잡한 미디어 쿼리를 줄이고 콘텐츠에 맞춰 자연스럽게 반응하는 그리드 패턴을 소개합니다.",visual:"# grid"},
+ {title:"느리게 읽는 시간",category:"일상",date:"2026. 07. 18",read:"3분",excerpt:"속도에서 잠시 벗어나 문장 하나를 오래 바라보는 일이 건네준 뜻밖의 여유에 대하여.",visual:"pause"}
 ];
-
-const nav = document.querySelector(".site-nav");
-const menuToggle = document.querySelector(".menu-toggle");
-const projectList = document.querySelector("#project-list");
-const contactButton = document.querySelector("[data-contact='email']");
-const contactMessage = document.querySelector("#contact-message");
-
-function renderProjects() {
-  if (!projectList) {
-    return;
-  }
-
-  projectList.innerHTML = projects
-    .map(
-      (project) => `
-        <article class="project-card">
-          <h3>${project.title}</h3>
-          <p>${project.description}</p>
-          <ul class="project-tags">
-            ${project.tags.map((tag) => `<li>${tag}</li>`).join("")}
-          </ul>
-          <a class="button secondary" href="${project.link}" target="_blank" rel="noreferrer">GitHub 보기</a>
-        </article>
-      `
-    )
-    .join("");
-}
-
-function closeMenu() {
-  if (!nav || !menuToggle) {
-    return;
-  }
-
-  nav.classList.remove("is-open");
-  menuToggle.setAttribute("aria-expanded", "false");
-  menuToggle.setAttribute("aria-label", "메뉴 열기");
-}
-
-if (menuToggle && nav) {
-  menuToggle.addEventListener("click", () => {
-    const isOpen = nav.classList.toggle("is-open");
-    menuToggle.setAttribute("aria-expanded", String(isOpen));
-    menuToggle.setAttribute("aria-label", isOpen ? "메뉴 닫기" : "메뉴 열기");
-  });
-}
-
-document.querySelectorAll('a[href^="#"]').forEach((link) => {
-  link.addEventListener("click", (event) => {
-    const targetId = link.getAttribute("href");
-    const target = document.querySelector(targetId);
-
-    if (!target) {
-      return;
-    }
-
-    event.preventDefault();
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    closeMenu();
-  });
-});
-
-if (contactButton && contactMessage) {
-  contactButton.addEventListener("click", () => {
-    contactMessage.textContent = "기본 메일 앱을 열어 연락할 수 있습니다.";
-  });
-}
-
-renderProjects();
+const nav=document.querySelector(".site-nav"),toggle=document.querySelector(".menu-toggle");
+if(toggle&&nav){toggle.addEventListener("click",()=>{const open=nav.classList.toggle("is-open");toggle.setAttribute("aria-expanded",String(open));toggle.setAttribute("aria-label",open?"메뉴 닫기":"메뉴 열기")});nav.addEventListener("click",e=>{if(e.target.closest("a")){nav.classList.remove("is-open");toggle.setAttribute("aria-expanded","false")}})}
+const list=document.querySelector("#post-list"),search=document.querySelector("#post-search"),filters=document.querySelectorAll("[data-filter]"),empty=document.querySelector("#empty-state"),more=document.querySelector("#load-more");let active="all",visible=4;
+function renderPosts(){if(!list)return;const query=(search?.value||"").trim().toLowerCase(),filtered=posts.filter(p=>(active==="all"||p.category===active)&&(p.title+p.excerpt).toLowerCase().includes(query));list.innerHTML=filtered.slice(0,visible).map(p=>`<article class="post-item"><div class="post-content"><div class="post-meta"><span class="category">${p.category}</span><span>${p.date}</span><span>· ${p.read}</span></div><h3><a href="post-detail.html">${p.title}</a></h3><p class="post-excerpt">${p.excerpt}</p></div><a class="post-thumb placeholder" href="post-detail.html" aria-label="${p.title} 읽기">${p.visual}</a></article>`).join("");if(empty)empty.hidden=filtered.length>0;if(more)more.hidden=visible>=filtered.length}
+filters.forEach(btn=>btn.addEventListener("click",()=>{filters.forEach(b=>b.classList.remove("is-active"));btn.classList.add("is-active");active=btn.dataset.filter;visible=4;renderPosts()}));search?.addEventListener("input",()=>{visible=4;renderPosts()});more?.addEventListener("click",()=>{visible+=2;renderPosts()});renderPosts();
+document.querySelectorAll("[data-demo-form]").forEach(form=>form.addEventListener("submit",e=>{e.preventDefault();const status=form.querySelector(".form-status")||document.querySelector(`#${form.dataset.status}`);if(form.checkValidity()){if(status)status.textContent=form.dataset.message||"완료되었습니다.";form.reset()}}));
+document.querySelectorAll(".password-toggle").forEach(btn=>btn.addEventListener("click",()=>{const input=btn.previousElementSibling;input.type=input.type==="password"?"text":"password";btn.textContent=input.type==="password"?"보기":"숨김"}));
+document.querySelectorAll(".auth-form").forEach(form=>form.addEventListener("submit",e=>{e.preventDefault();let valid=true;form.querySelectorAll("[required]").forEach(input=>{const error=input.closest(".field")?.querySelector(".field-error");if((input.type==="checkbox"&&!input.checked)||!input.value.trim()){valid=false;if(error)error.textContent="필수 입력 항목입니다."}else if(input.type==="email"&&!input.validity.valid){valid=false;if(error)error.textContent="올바른 이메일을 입력해 주세요."}else if(input.name==="password"&&input.value.length<8){valid=false;if(error)error.textContent="비밀번호는 8자 이상이어야 합니다."}else if(error)error.textContent=""});const pw=form.querySelector("[name=password]"),confirm=form.querySelector("[name=passwordConfirm]");if(confirm&&pw?.value!==confirm.value){valid=false;confirm.closest(".field").querySelector(".field-error").textContent="비밀번호가 일치하지 않습니다."}if(valid){const box=form.querySelector(".success-box");if(box){box.hidden=false;box.textContent=form.dataset.success}form.reset()}}));
+const like=document.querySelector("[data-like]");like?.addEventListener("click",()=>{like.classList.toggle("is-active");like.setAttribute("aria-pressed",String(like.classList.contains("is-active")));like.textContent=like.classList.contains("is-active")?"♥":"♡"});
+const copy=document.querySelector("[data-copy]");copy?.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(location.href);copy.textContent="✓";setTimeout(()=>copy.textContent="↗",1400)}catch{copy.textContent="!"}});
+const editor=document.querySelector(".editor-form");if(editor){const title=editor.querySelector(".title-input"),summary=editor.querySelector(".summary-input"),body=editor.querySelector(".body-input"),category=editor.querySelector(".editor-category"),status=document.querySelector(".draft-status"),key="blog-draft";try{const draft=JSON.parse(localStorage.getItem(key));if(draft){title.value=draft.title||"";summary.value=draft.summary||"";body.value=draft.body||"";category.value=draft.category||"개발"}}catch{}const save=()=>{localStorage.setItem(key,JSON.stringify({title:title.value,summary:summary.value,body:body.value,category:category.value}));status.textContent=`${new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})} 임시저장됨`};document.querySelector("[data-save]")?.addEventListener("click",save);editor.addEventListener("submit",e=>{e.preventDefault();if(!title.value.trim()||!body.value.trim()){status.textContent="제목과 본문을 입력해 주세요.";return}save();status.textContent="발행 준비가 완료되었습니다. (데모)"});document.querySelectorAll("[data-format]").forEach(btn=>btn.addEventListener("click",()=>{const mark=btn.dataset.format,start=body.selectionStart,end=body.selectionEnd,selected=body.value.slice(start,end);body.setRangeText(mark+selected+mark,start,end,"select");body.focus()}))}
