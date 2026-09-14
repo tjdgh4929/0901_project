@@ -13,6 +13,7 @@ const AUTH_CONFIG = Object.freeze({
   spreadsheetId: '1z7rvJsh5ZaNGIwxm2ubj9AT1lH5EF4SvUiuaLhBSz9I',
   usersSheet: 'Users',
   sessionsSheet: 'Sessions',
+  postsSheet: 'Posts',
   hashIterations: 12000,
   sessionHours: 24,
   maxLoginAttempts: 5,
@@ -38,6 +39,19 @@ const SESSION_HEADERS = [
   'createdAt',
 ];
 
+const POST_HEADERS = [
+  'id',
+  'title',
+  'category',
+  'summary',
+  'content',
+  'authorId',
+  'authorName',
+  'status',
+  'createdAt',
+  'updatedAt',
+];
+
 function setupAuth() {
   ensureAuthSetup_();
   return '인증용 시트와 보안 설정이 준비되었습니다.';
@@ -49,6 +63,14 @@ function doGet(e) {
 
     if (action === 'health') {
       return json_({ ok: true, message: 'Auth API is running.' });
+    }
+
+    if (action === 'listPosts') {
+      return listPosts_();
+    }
+
+    if (action === 'getPost') {
+      return getPost_(String(e.parameter.id || ''));
     }
 
     return json_({ ok: false, message: '지원하지 않는 요청입니다.' });
@@ -77,6 +99,22 @@ function doPost(e) {
 
     if (action === 'me') {
       return getCurrentUser_(String(payload.token || ''));
+    }
+
+    if (action === 'myPosts') {
+      return myPosts_(String(payload.token || ''));
+    }
+
+    if (action === 'createPost') {
+      return createPost_(payload);
+    }
+
+    if (action === 'updatePost') {
+      return updatePost_(payload);
+    }
+
+    if (action === 'deletePost') {
+      return deletePost_(payload);
     }
 
     return json_({ ok: false, message: '지원하지 않는 요청입니다.' });
@@ -255,13 +293,195 @@ function logout_(token) {
 }
 
 function getCurrentUser_(token) {
-  if (!token) {
-    return json_({ ok: false, code: 'UNAUTHORIZED', message: '로그인이 필요합니다.' });
+  try {
+    return json_({ ok: true, data: { user: publicUser_(requireUser_(token)) } });
+  } catch (error) {
+    return json_({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: error.message || '로그인이 필요합니다.',
+    });
+  }
+}
+
+function listPosts_() {
+  const posts = getObjects_(getSheet_(AUTH_CONFIG.postsSheet))
+    .filter(function (post) { return post.status === 'PUBLISHED'; })
+    .sort(function (left, right) {
+      return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+    })
+    .map(publicPost_);
+
+  return json_({ ok: true, data: { posts: posts } });
+}
+
+function getPost_(id) {
+  if (!id) {
+    return json_({ ok: false, code: 'INVALID_ID', message: '게시글 ID가 필요합니다.' });
   }
 
-  const sessions = getObjects_(getSheet_(AUTH_CONFIG.sessionsSheet));
+  const post = getObjects_(getSheet_(AUTH_CONFIG.postsSheet)).find(function (item) {
+    return String(item.id) === id && item.status === 'PUBLISHED';
+  });
+
+  if (!post) {
+    return json_({ ok: false, code: 'NOT_FOUND', message: '게시글을 찾을 수 없습니다.' });
+  }
+
+  return json_({ ok: true, data: { post: publicPost_(post) } });
+}
+
+function myPosts_(token) {
+  const user = requireUser_(token);
+  const posts = getObjects_(getSheet_(AUTH_CONFIG.postsSheet))
+    .filter(function (post) { return String(post.authorId) === String(user.id); })
+    .sort(function (left, right) {
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    })
+    .map(publicPost_);
+
+  return json_({ ok: true, data: { posts: posts } });
+}
+
+function createPost_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const user = requireUser_(String(payload.token || ''));
+    const data = validatePost_(payload);
+    const sheet = getSheet_(AUTH_CONFIG.postsSheet);
+    const now = new Date();
+    const id = Utilities.getUuid();
+
+    sheet.appendRow([
+      id,
+      data.title,
+      data.category,
+      data.summary,
+      data.content,
+      user.id,
+      user.nickname || user.name,
+      data.status,
+      now,
+      now,
+    ]);
+
+    const post = {
+      id: id,
+      title: data.title,
+      category: data.category,
+      summary: data.summary,
+      content: data.content,
+      authorId: user.id,
+      authorName: user.nickname || user.name,
+      status: data.status,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    return json_({
+      ok: true,
+      message: data.status === 'PUBLISHED' ? '게시글이 발행되었습니다.' : '임시저장되었습니다.',
+      data: { post: publicPost_(post) },
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updatePost_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const user = requireUser_(String(payload.token || ''));
+    const id = String(payload.id || '');
+    const data = validatePost_(payload);
+    const sheet = getSheet_(AUTH_CONFIG.postsSheet);
+    const post = getObjects_(sheet).find(function (item) {
+      return String(item.id) === id;
+    });
+
+    if (!post) {
+      return json_({ ok: false, code: 'NOT_FOUND', message: '게시글을 찾을 수 없습니다.' });
+    }
+
+    if (String(post.authorId) !== String(user.id)) {
+      return json_({ ok: false, code: 'FORBIDDEN', message: '수정 권한이 없습니다.' });
+    }
+
+    const updatedAt = new Date();
+    sheet.getRange(post.__rowNumber, 1, 1, POST_HEADERS.length).setValues([[
+      post.id,
+      data.title,
+      data.category,
+      data.summary,
+      data.content,
+      post.authorId,
+      post.authorName,
+      data.status,
+      post.createdAt,
+      updatedAt,
+    ]]);
+
+    return json_({
+      ok: true,
+      message: '게시글이 수정되었습니다.',
+      data: {
+        post: publicPost_({
+          id: post.id,
+          title: data.title,
+          category: data.category,
+          summary: data.summary,
+          content: data.content,
+          authorId: post.authorId,
+          authorName: post.authorName,
+          status: data.status,
+          createdAt: post.createdAt,
+          updatedAt: updatedAt,
+        }),
+      },
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deletePost_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const user = requireUser_(String(payload.token || ''));
+    const id = String(payload.id || '');
+    const sheet = getSheet_(AUTH_CONFIG.postsSheet);
+    const post = getObjects_(sheet).find(function (item) {
+      return String(item.id) === id;
+    });
+
+    if (!post) {
+      return json_({ ok: false, code: 'NOT_FOUND', message: '게시글을 찾을 수 없습니다.' });
+    }
+
+    if (String(post.authorId) !== String(user.id)) {
+      return json_({ ok: false, code: 'FORBIDDEN', message: '삭제 권한이 없습니다.' });
+    }
+
+    sheet.deleteRow(post.__rowNumber);
+    return json_({ ok: true, message: '게시글이 삭제되었습니다.' });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function requireUser_(token) {
+  if (!token) {
+    throw new Error('로그인이 필요합니다.');
+  }
+
   const tokenHash = sha256_(token);
-  const session = sessions.find(function (item) {
+  const session = getObjects_(getSheet_(AUTH_CONFIG.sessionsSheet)).find(function (item) {
     return (
       constantTimeEqual_(String(item.tokenHash), tokenHash) &&
       new Date(item.expiresAt).getTime() > Date.now()
@@ -269,7 +489,7 @@ function getCurrentUser_(token) {
   });
 
   if (!session) {
-    return json_({ ok: false, code: 'SESSION_EXPIRED', message: '로그인이 만료되었습니다.' });
+    throw new Error('로그인이 만료되었습니다.');
   }
 
   const user = getObjects_(getSheet_(AUTH_CONFIG.usersSheet)).find(function (item) {
@@ -277,10 +497,58 @@ function getCurrentUser_(token) {
   });
 
   if (!user) {
-    return json_({ ok: false, code: 'UNAUTHORIZED', message: '사용자 정보를 찾을 수 없습니다.' });
+    throw new Error('사용자 정보를 찾을 수 없습니다.');
   }
 
-  return json_({ ok: true, data: { user: publicUser_(user) } });
+  return user;
+}
+
+function validatePost_(payload) {
+  const status = payload.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED';
+  const title = cleanPostText_(payload.title, 100) || (status === 'DRAFT' ? '제목 없음' : '');
+  const category = cleanText_(payload.category || '생각', 20);
+  const summary = cleanPostText_(payload.summary, 300);
+  const content = cleanPostText_(payload.content, 50000);
+
+  if (status === 'PUBLISHED' && title.length < 2) {
+    throw new Error('제목을 2자 이상 입력해 주세요.');
+  }
+
+  if (status === 'PUBLISHED' && content.length < 10) {
+    throw new Error('본문을 10자 이상 입력해 주세요.');
+  }
+
+  return {
+    title: title,
+    category: category,
+    summary: summary,
+    content: content,
+    status: status,
+  };
+}
+
+function publicPost_(post) {
+  return {
+    id: String(post.id),
+    title: String(post.title),
+    category: String(post.category),
+    summary: String(post.summary || ''),
+    content: String(post.content),
+    authorId: String(post.authorId),
+    authorName: String(post.authorName),
+    status: String(post.status),
+    createdAt: toIsoString_(post.createdAt),
+    updatedAt: toIsoString_(post.updatedAt),
+  };
+}
+
+function toIsoString_(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function cleanPostText_(value, maxLength) {
+  return String(value || '').trim().slice(0, maxLength);
 }
 
 function validateSignup_(email, name, nickname, password) {
@@ -434,6 +702,7 @@ function ensureAuthSetup_() {
 
   createSheetIfMissing_(spreadsheet, AUTH_CONFIG.usersSheet, USER_HEADERS);
   createSheetIfMissing_(spreadsheet, AUTH_CONFIG.sessionsSheet, SESSION_HEADERS);
+  createSheetIfMissing_(spreadsheet, AUTH_CONFIG.postsSheet, POST_HEADERS);
 
   const properties = PropertiesService.getScriptProperties();
   if (!properties.getProperty('PASSWORD_PEPPER')) {

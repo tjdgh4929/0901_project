@@ -8,10 +8,11 @@ Google Apps Script 프로젝트의 `Code.gs` 내용을 이 폴더의 `Code.gs`�
 
 Apps Script 상단 함수 목록에서 `setupAuth`를 선택해 한 번 실행하고 Google 권한을 승인한다. 실행하지 않은 경우에도 첫 인증 요청에서 필요한 시트와 설정을 자동 생성한다.
 
-설정이 끝나면 연결된 스프레드시트에 다음 시트가 생성된다.
+설정이 끝나면 연결된 스프레드시트에 다음 시트가 생성된다. 첫 API 요청에서도 자동 생성된다.
 
 - `Users`: 회원 정보와 암호화된 비밀번호
 - `Sessions`: 로그인 세션 토큰의 해시와 만료 시각
+- `Posts`: 게시글 본문, 작성자, 공개 상태와 작성·수정 시각
 
 ## 3. 웹 앱 배포
 
@@ -80,6 +81,17 @@ fetch(API_URL, {
   body: JSON.stringify({ action: 'logout', token })
 });
 ```
+
+### 게시글 API
+
+- `GET ?action=listPosts`: 발행된 게시글 목록
+- `GET ?action=getPost&id=게시글ID`: 발행된 게시글 상세
+- `POST { action: "myPosts", token }`: 로그인 사용자의 글 목록
+- `POST { action: "createPost", token, ...글정보 }`: 글 생성
+- `POST { action: "updatePost", token, id, ...글정보 }`: 본인 글 수정
+- `POST { action: "deletePost", token, id }`: 본인 글 삭제
+
+글 정보에는 `title`, `category`, `summary`, `content`, `status`가 들어간다. `status`는 `PUBLISHED` 또는 `DRAFT`다.
 
 ## 보안 범위
 
