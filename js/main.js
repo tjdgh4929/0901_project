@@ -19,7 +19,36 @@ function validateAuthForm(form){let valid=true;form.querySelectorAll("[required]
 async function authRequest(payload){const response=await fetch(AUTH_API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)});if(!response.ok)throw new Error("인증 서버에 연결하지 못했습니다.");return response.json()}
 document.querySelectorAll(".auth-form").forEach(form=>form.addEventListener("submit",async e=>{e.preventDefault();if(!validateAuthForm(form))return;const action=form.dataset.authAction,button=form.querySelector("[type=submit]"),originalText=button.textContent,formData=new FormData(form);button.disabled=true;button.textContent=action==="login"?"로그인 중...":"계정 생성 중...";showAuthMessage(form,"요청을 처리하고 있습니다.");try{const payload={action,email:formData.get("email"),password:formData.get("password")};if(action==="signup"){payload.name=formData.get("name");payload.nickname=formData.get("nickname")}const result=await authRequest(payload);if(!result.ok)throw new Error(result.message||"요청을 처리하지 못했습니다.");if(action==="login"){const storage=formData.get("remember")?"local":"session";const target=storage==="local"?localStorage:sessionStorage;const other=storage==="local"?sessionStorage:localStorage;other.removeItem("blogAuthToken");other.removeItem("blogAuthUser");target.setItem("blogAuthToken",result.data.token);target.setItem("blogAuthUser",JSON.stringify(result.data.user));showAuthMessage(form,"로그인되었습니다. 프로필로 이동합니다.");setTimeout(()=>location.href="profile.html",700)}else{form.reset();showAuthMessage(form,"회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.");setTimeout(()=>location.href="login.html",900)}}catch(error){showAuthMessage(form,error.message||"인증 서버와 통신하지 못했습니다.",true)}finally{button.disabled=false;button.textContent=originalText}}));
 function getStoredAuth(){const storage=localStorage.getItem("blogAuthToken")?localStorage:sessionStorage;return{storage,token:storage.getItem("blogAuthToken"),user:storage.getItem("blogAuthUser")}}
-const storedAuth=getStoredAuth();if(storedAuth.token){document.querySelectorAll('a[href="login.html"]').forEach(link=>{link.textContent="로그아웃";link.href="#logout";link.addEventListener("click",async e=>{e.preventDefault();try{await authRequest({action:"logout",token:storedAuth.token})}finally{storedAuth.storage.removeItem("blogAuthToken");storedAuth.storage.removeItem("blogAuthUser");location.href="index.html"}})})}
+const storedAuth=getStoredAuth();
+if(storedAuth.token){
+  document.querySelectorAll(".site-nav").forEach(menu=>{
+    const loginLink=menu.querySelector('a[href="login.html"]');
+    const signupLink=menu.querySelector('a[href="signup.html"]');
+
+    if(signupLink){
+      signupLink.textContent="프로필";
+      signupLink.href="profile.html";
+      signupLink.setAttribute("aria-label","내 프로필 보기");
+    }
+
+    if(loginLink){
+      loginLink.textContent="로그아웃";
+      loginLink.href="#logout";
+      loginLink.addEventListener("click",async event=>{
+        event.preventDefault();
+        loginLink.setAttribute("aria-disabled","true");
+        loginLink.textContent="로그아웃 중...";
+        try{
+          await authRequest({action:"logout",token:storedAuth.token});
+        }finally{
+          storedAuth.storage.removeItem("blogAuthToken");
+          storedAuth.storage.removeItem("blogAuthUser");
+          location.href="index.html";
+        }
+      });
+    }
+  });
+}
 const like=document.querySelector("[data-like]");like?.addEventListener("click",()=>{like.classList.toggle("is-active");like.setAttribute("aria-pressed",String(like.classList.contains("is-active")));like.textContent=like.classList.contains("is-active")?"♥":"♡"});
 const copy=document.querySelector("[data-copy]");copy?.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(location.href);copy.textContent="✓";setTimeout(()=>copy.textContent="↗",1400)}catch{copy.textContent="!"}});
 const editor=document.querySelector(".editor-form");if(editor){const title=editor.querySelector(".title-input"),summary=editor.querySelector(".summary-input"),body=editor.querySelector(".body-input"),category=editor.querySelector(".editor-category"),status=document.querySelector(".draft-status"),key="blog-draft";try{const draft=JSON.parse(localStorage.getItem(key));if(draft){title.value=draft.title||"";summary.value=draft.summary||"";body.value=draft.body||"";category.value=draft.category||"개발"}}catch{}const save=()=>{localStorage.setItem(key,JSON.stringify({title:title.value,summary:summary.value,body:body.value,category:category.value}));status.textContent=`${new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})} 임시저장됨`};document.querySelector("[data-save]")?.addEventListener("click",save);editor.addEventListener("submit",e=>{e.preventDefault();if(!title.value.trim()||!body.value.trim()){status.textContent="제목과 본문을 입력해 주세요.";return}save();status.textContent="발행 준비가 완료되었습니다. (데모)"});document.querySelectorAll("[data-format]").forEach(btn=>btn.addEventListener("click",()=>{const mark=btn.dataset.format,start=body.selectionStart,end=body.selectionEnd,selected=body.value.slice(start,end);body.setRangeText(mark+selected+mark,start,end,"select");body.focus()}))}
