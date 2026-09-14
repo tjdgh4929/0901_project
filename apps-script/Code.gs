@@ -1,5 +1,5 @@
 /**
- * 기록의 온도 - Google Sheets 인증 API
+ * 기록의 온도 - Google Sheets 블로그 API
  *
  * 1. Apps Script에 이 파일을 붙여 넣습니다.
  * 2. setupAuth()를 한 번 직접 실행하고 권한을 승인합니다.
@@ -14,7 +14,8 @@ const AUTH_CONFIG = Object.freeze({
   usersSheet: 'Users',
   sessionsSheet: 'Sessions',
   postsSheet: 'Posts',
-  hashIterations: 12000,
+  hashIterations: 1500,
+  legacyHashIterations: 12000,
   sessionHours: 24,
   maxLoginAttempts: 5,
   loginBlockSeconds: 15 * 60,
@@ -52,6 +53,8 @@ const POST_HEADERS = [
   'updatedAt',
 ];
 
+let spreadsheetInstance_ = null;
+
 function setupAuth() {
   ensureAuthSetup_();
   return '인증용 시트와 보안 설정이 준비되었습니다.';
@@ -62,7 +65,7 @@ function doGet(e) {
     const action = String((e && e.parameter && e.parameter.action) || 'health');
 
     if (action === 'health') {
-      return json_({ ok: true, message: 'Auth API is running.' });
+      return json_({ ok: true, message: 'Blog API is running.' });
     }
 
     if (action === 'listPosts') {
@@ -103,6 +106,10 @@ function doPost(e) {
 
     if (action === 'myPosts') {
       return myPosts_(String(payload.token || ''));
+    }
+
+    if (action === 'getMyPost') {
+      return getMyPost_(String(payload.token || ''), String(payload.id || ''));
     }
 
     if (action === 'createPost') {
@@ -219,10 +226,7 @@ function login_(payload) {
     const valid =
       user &&
       user.status === 'ACTIVE' &&
-      constantTimeEqual_(
-        hashPassword_(password, String(user.passwordSalt)),
-        String(user.passwordHash)
-      );
+      verifyPassword_(password, String(user.passwordSalt), String(user.passwordHash));
 
     if (!valid) {
       recordFailedLogin_(email);
@@ -235,6 +239,13 @@ function login_(payload) {
 
     clearFailedLogins_(email);
     deleteExpiredSessions_();
+
+    if (!String(user.passwordHash).startsWith('v2$')) {
+      updateUserPasswordHash_(usersSheet, user.__rowNumber, hashPassword_(
+        password,
+        String(user.passwordSalt)
+      ));
+    }
 
     const token = createRandomToken_() + createRandomToken_();
     const tokenHash = sha256_(token);
@@ -249,6 +260,11 @@ function login_(payload) {
       expiresAt,
       now,
     ]);
+    CacheService.getScriptCache().put(
+      authCacheKey_(token),
+      JSON.stringify(publicUser_(user)),
+      300
+    );
 
     updateUserLastLogin_(usersSheet, user.__rowNumber, now);
 
@@ -275,6 +291,7 @@ function logout_(token) {
   lock.waitLock(10000);
 
   try {
+    CacheService.getScriptCache().remove(authCacheKey_(token));
     const sheet = getSheet_(AUTH_CONFIG.sessionsSheet);
     const tokenHash = sha256_(token);
     const sessions = getObjects_(sheet);
@@ -305,19 +322,37 @@ function getCurrentUser_(token) {
 }
 
 function listPosts_() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('published-posts-v2');
+  if (cached) {
+    return json_(JSON.parse(cached));
+  }
+
   const posts = getObjects_(getSheet_(AUTH_CONFIG.postsSheet))
     .filter(function (post) { return post.status === 'PUBLISHED'; })
     .sort(function (left, right) {
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     })
-    .map(publicPost_);
+    .map(publicPostSummary_);
 
-  return json_({ ok: true, data: { posts: posts } });
+  const response = { ok: true, data: { posts: posts } };
+  const serialized = JSON.stringify(response);
+  if (serialized.length < 95000) {
+    cache.put('published-posts-v2', serialized, 120);
+  }
+  return json_(response);
 }
 
 function getPost_(id) {
   if (!id) {
     return json_({ ok: false, code: 'INVALID_ID', message: '게시글 ID가 필요합니다.' });
+  }
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'post-v2-' + id;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return json_(JSON.parse(cached));
   }
 
   const post = getObjects_(getSheet_(AUTH_CONFIG.postsSheet)).find(function (item) {
@@ -328,7 +363,12 @@ function getPost_(id) {
     return json_({ ok: false, code: 'NOT_FOUND', message: '게시글을 찾을 수 없습니다.' });
   }
 
-  return json_({ ok: true, data: { post: publicPost_(post) } });
+  const response = { ok: true, data: { post: publicPost_(post) } };
+  const serialized = JSON.stringify(response);
+  if (serialized.length < 95000) {
+    cache.put(cacheKey, serialized, 300);
+  }
+  return json_(response);
 }
 
 function myPosts_(token) {
@@ -338,9 +378,22 @@ function myPosts_(token) {
     .sort(function (left, right) {
       return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
     })
-    .map(publicPost_);
+    .map(publicPostSummary_);
 
   return json_({ ok: true, data: { posts: posts } });
+}
+
+function getMyPost_(token, id) {
+  const user = requireUser_(token);
+  const post = getObjects_(getSheet_(AUTH_CONFIG.postsSheet)).find(function (item) {
+    return String(item.id) === id && String(item.authorId) === String(user.id);
+  });
+
+  if (!post) {
+    return json_({ ok: false, code: 'NOT_FOUND', message: '게시글을 찾을 수 없습니다.' });
+  }
+
+  return json_({ ok: true, data: { post: publicPost_(post) } });
 }
 
 function createPost_(payload) {
@@ -366,6 +419,7 @@ function createPost_(payload) {
       now,
       now,
     ]);
+    clearPostCache_(id);
 
     const post = {
       id: id,
@@ -424,6 +478,7 @@ function updatePost_(payload) {
       post.createdAt,
       updatedAt,
     ]]);
+    clearPostCache_(id);
 
     return json_({
       ok: true,
@@ -469,6 +524,7 @@ function deletePost_(payload) {
     }
 
     sheet.deleteRow(post.__rowNumber);
+    clearPostCache_(id);
     return json_({ ok: true, message: '게시글이 삭제되었습니다.' });
   } finally {
     lock.releaseLock();
@@ -478,6 +534,13 @@ function deletePost_(payload) {
 function requireUser_(token) {
   if (!token) {
     throw new Error('로그인이 필요합니다.');
+  }
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = authCacheKey_(token);
+  const cachedUser = cache.get(cacheKey);
+  if (cachedUser) {
+    return JSON.parse(cachedUser);
   }
 
   const tokenHash = sha256_(token);
@@ -500,7 +563,19 @@ function requireUser_(token) {
     throw new Error('사용자 정보를 찾을 수 없습니다.');
   }
 
+  const remainingSeconds = Math.floor(
+    (new Date(session.expiresAt).getTime() - Date.now()) / 1000
+  );
+  cache.put(
+    cacheKey,
+    JSON.stringify(publicUser_(user)),
+    Math.max(1, Math.min(300, remainingSeconds))
+  );
   return user;
+}
+
+function authCacheKey_(token) {
+  return 'auth-v1-' + sha256_(token).slice(0, 40);
 }
 
 function validatePost_(payload) {
@@ -542,6 +617,19 @@ function publicPost_(post) {
   };
 }
 
+function publicPostSummary_(post) {
+  const summary = publicPost_(post);
+  delete summary.content;
+  summary.readingMinutes = Math.max(1, Math.ceil(String(post.content || '').length / 500));
+  return summary;
+}
+
+function clearPostCache_(id) {
+  const cache = CacheService.getScriptCache();
+  cache.remove('published-posts-v2');
+  if (id) cache.remove('post-v2-' + id);
+}
+
 function toIsoString_(value) {
   const date = value instanceof Date ? value : new Date(value);
   return isNaN(date.getTime()) ? '' : date.toISOString();
@@ -566,16 +654,31 @@ function validateSignup_(email, name, nickname, password) {
 }
 
 function hashPassword_(password, salt) {
-  const pepper =
-    PropertiesService.getScriptProperties().getProperty('PASSWORD_PEPPER');
+  return 'v2$' + derivePasswordHash_(
+    password,
+    salt,
+    AUTH_CONFIG.hashIterations
+  );
+}
 
-  if (!pepper) {
-    throw new Error('setupAuth()를 먼저 실행해 주세요.');
+function verifyPassword_(password, salt, storedHash) {
+  if (storedHash.startsWith('v2$')) {
+    return constantTimeEqual_(hashPassword_(password, salt), storedHash);
   }
 
+  const legacyHash = derivePasswordHash_(
+    password,
+    salt,
+    AUTH_CONFIG.legacyHashIterations
+  );
+  return constantTimeEqual_(legacyHash, storedHash);
+}
+
+function derivePasswordHash_(password, salt, iterations) {
+  const pepper = ensurePasswordPepper_();
   let value = salt + String(password) + pepper;
 
-  for (let i = 0; i < AUTH_CONFIG.hashIterations; i += 1) {
+  for (let i = 0; i < iterations; i += 1) {
     value = sha256_(value + salt + pepper);
   }
 
@@ -625,6 +728,11 @@ function publicUser_(user) {
 function updateUserLastLogin_(sheet, rowNumber, date) {
   const lastLoginColumn = USER_HEADERS.indexOf('lastLoginAt') + 1;
   sheet.getRange(rowNumber, lastLoginColumn).setValue(date);
+}
+
+function updateUserPasswordHash_(sheet, rowNumber, passwordHash) {
+  const passwordHashColumn = USER_HEADERS.indexOf('passwordHash') + 1;
+  sheet.getRange(rowNumber, passwordHashColumn).setValue(passwordHash);
 }
 
 function deleteExpiredSessions_() {
@@ -688,7 +796,20 @@ function cleanText_(value, maxLength) {
 }
 
 function getSheet_(name) {
-  const sheet = ensureAuthSetup_().getSheetByName(name);
+  const spreadsheet = getSpreadsheet_();
+  let sheet = spreadsheet.getSheetByName(name);
+
+  if (!sheet) {
+    const headersByName = {};
+    headersByName[AUTH_CONFIG.usersSheet] = USER_HEADERS;
+    headersByName[AUTH_CONFIG.sessionsSheet] = SESSION_HEADERS;
+    headersByName[AUTH_CONFIG.postsSheet] = POST_HEADERS;
+    const headers = headersByName[name];
+    if (headers) {
+      createSheetIfMissing_(spreadsheet, name, headers);
+      sheet = spreadsheet.getSheetByName(name);
+    }
+  }
 
   if (!sheet) {
     throw new Error('인증용 시트를 준비하지 못했습니다.');
@@ -698,21 +819,32 @@ function getSheet_(name) {
 }
 
 function ensureAuthSetup_() {
-  const spreadsheet = SpreadsheetApp.openById(AUTH_CONFIG.spreadsheetId);
+  const spreadsheet = getSpreadsheet_();
 
   createSheetIfMissing_(spreadsheet, AUTH_CONFIG.usersSheet, USER_HEADERS);
   createSheetIfMissing_(spreadsheet, AUTH_CONFIG.sessionsSheet, SESSION_HEADERS);
   createSheetIfMissing_(spreadsheet, AUTH_CONFIG.postsSheet, POST_HEADERS);
 
-  const properties = PropertiesService.getScriptProperties();
-  if (!properties.getProperty('PASSWORD_PEPPER')) {
-    properties.setProperty(
-      'PASSWORD_PEPPER',
-      Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid()
-    );
-  }
+  ensurePasswordPepper_();
 
   return spreadsheet;
+}
+
+function getSpreadsheet_() {
+  if (!spreadsheetInstance_) {
+    spreadsheetInstance_ = SpreadsheetApp.openById(AUTH_CONFIG.spreadsheetId);
+  }
+  return spreadsheetInstance_;
+}
+
+function ensurePasswordPepper_() {
+  const properties = PropertiesService.getScriptProperties();
+  let pepper = properties.getProperty('PASSWORD_PEPPER');
+  if (!pepper) {
+    pepper = Utilities.getUuid() + Utilities.getUuid() + Utilities.getUuid();
+    properties.setProperty('PASSWORD_PEPPER', pepper);
+  }
+  return pepper;
 }
 
 function getObjects_(sheet) {

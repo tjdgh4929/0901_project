@@ -1,4 +1,36 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbz70Zul59j0MRMdQCPPRFrG3kn1gqg4EHYw_OONJ4HsNpIrDG1w8Uq3kXQyJ6KiAz4l/exec";
+const CACHE_TTL = {
+  publishedPosts: 5 * 60 * 1000,
+  postDetail: 10 * 60 * 1000,
+  myPosts: 2 * 60 * 1000,
+};
+
+if (!localStorage.getItem("blog-storage-cleanup-v1")) {
+  localStorage.removeItem("blog-draft");
+  localStorage.setItem("blog-storage-cleanup-v1", "done");
+}
+
+function readCache(key, maxAge) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(key));
+    if (!cached || Date.now() - cached.savedAt > maxAge) return null;
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key, data) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {}
+}
+
+function removePostCaches(postId) {
+  localStorage.removeItem("blog-published-posts");
+  localStorage.removeItem("blog-my-posts");
+  if (postId) localStorage.removeItem(`blog-post-${postId}`);
+}
 
 async function apiGet(action, params = {}) {
   const url = new URL(API_URL);
@@ -55,6 +87,7 @@ function getStoredAuth() {
 function clearStoredAuth(auth = getStoredAuth()) {
   auth.storage.removeItem("blogAuthToken");
   auth.storage.removeItem("blogAuthUser");
+  localStorage.removeItem("blog-my-posts");
 }
 
 const nav = document.querySelector(".site-nav");
@@ -74,6 +107,22 @@ if (menuToggle && nav) {
 }
 
 const storedAuth = getStoredAuth();
+if (storedAuth.user) {
+  try {
+    const user = JSON.parse(storedAuth.user);
+    document.querySelectorAll("[data-profile-name]").forEach((element) => {
+      element.textContent = user.nickname || user.name;
+    });
+    document.querySelectorAll("[data-profile-email]").forEach((element) => {
+      element.textContent = user.email;
+    });
+    document.querySelectorAll("[data-profile-initial]").forEach((element) => {
+      element.textContent = String(user.nickname || user.name || "?").slice(0, 1).toUpperCase();
+    });
+    const guest = document.querySelector("#profile-guest");
+    if (guest) guest.hidden = true;
+  } catch {}
+}
 if (storedAuth.token) {
   document.querySelectorAll(".site-nav").forEach((menu) => {
     const loginLink = menu.querySelector('a[href="login.html"]');
@@ -131,7 +180,7 @@ function renderPosts() {
             <div class="post-meta">
               <span class="category">${escapeHtml(post.category)}</span>
               <span>${formatDate(post.createdAt)}</span>
-              <span>· ${readingTime(post.content)}</span>
+              <span>· ${post.readingMinutes ? `${post.readingMinutes}분` : readingTime(post.content)}</span>
             </div>
             <h3><a href="${href}">${escapeHtml(post.title)}</a></h3>
             <p class="post-excerpt">${escapeHtml(post.summary || post.content)}</p>
@@ -161,13 +210,21 @@ function renderPosts() {
 
 async function loadPublishedPosts() {
   if (!postList) return;
-  postList.innerHTML = '<p class="loading-message">게시글을 불러오는 중입니다.</p>';
+  const cachedPosts = readCache("blog-published-posts", CACHE_TTL.publishedPosts);
+  if (cachedPosts) {
+    posts = cachedPosts;
+    renderPosts();
+  } else {
+    postList.innerHTML = '<p class="loading-message">게시글을 불러오는 중입니다.</p>';
+  }
   try {
     const result = await apiGet("listPosts");
     if (!result.ok) throw new Error(result.message);
     posts = result.data.posts || [];
+    writeCache("blog-published-posts", posts);
     renderPosts();
   } catch (error) {
+    if (cachedPosts) return;
     postList.innerHTML = "";
     if (emptyState) {
       emptyState.hidden = false;
@@ -322,25 +379,38 @@ async function loadPostDetail() {
     return;
   }
 
+  const cachedPost = readCache(`blog-post-${id}`, CACHE_TTL.postDetail);
+  if (cachedPost) renderPostDetail(cachedPost);
+
   try {
     const result = await apiGet("getPost", { id });
     if (!result.ok) throw new Error(result.message);
     const post = result.data.post;
-    title.textContent = post.title;
-    document.title = `${post.title} — 기록의 온도`;
-    document.querySelector("[data-post-category]").textContent = post.category;
-    document.querySelectorAll("[data-post-author]").forEach((element) => {
-      element.textContent = post.authorName;
-    });
-    document.querySelector("[data-post-date]").textContent = formatDate(post.createdAt);
-    document.querySelector("[data-post-read]").textContent = `${readingTime(post.content)} 소요`;
-    document.querySelector("[data-post-summary]").textContent = post.summary || post.content.slice(0, 180);
-    document.querySelector("[data-post-content]").textContent = post.content;
-    document.querySelector("[data-article]").hidden = false;
+    writeCache(`blog-post-${id}`, post);
+    renderPostDetail(post);
   } catch (error) {
+    if (cachedPost) return;
     errorBox.hidden = false;
     errorBox.textContent = error.message || "게시글을 불러오지 못했습니다.";
   }
+}
+
+function renderPostDetail(post) {
+  document.querySelector("[data-post-title]").textContent = post.title;
+  document.title = `${post.title} — 기록의 온도`;
+  document.querySelector("[data-post-category]").textContent = post.category;
+  document.querySelectorAll("[data-post-author]").forEach((element) => {
+    element.textContent = post.authorName;
+  });
+  const initial = document.querySelector("[data-post-author-initial]");
+  if (initial) initial.textContent = String(post.authorName || "?").slice(0, 1).toUpperCase();
+  document.querySelector("[data-post-date]").textContent = formatDate(post.createdAt);
+  document.querySelector("[data-post-read]").textContent =
+    `${post.readingMinutes || readingTime(post.content).replace("분", "")}분 소요`;
+  document.querySelector("[data-post-summary]").textContent =
+    post.summary || post.content.slice(0, 180);
+  document.querySelector("[data-post-content]").textContent = post.content;
+  document.querySelector("[data-article]").hidden = false;
 }
 loadPostDetail();
 
@@ -392,10 +462,9 @@ if (editor) {
 
     if (editId) {
       status.textContent = "게시글을 불러오는 중...";
-      apiPost({ action: "myPosts", token: auth.token }).then((result) => {
+      apiPost({ action: "getMyPost", token: auth.token, id: editId }).then((result) => {
         if (!result.ok) throw new Error(result.message);
-        const post = result.data.posts.find((item) => item.id === editId);
-        if (!post) throw new Error("수정할 게시글을 찾을 수 없습니다.");
+        const post = result.data.post;
         title.value = post.title;
         summary.value = post.summary;
         body.value = post.content;
@@ -414,6 +483,17 @@ if (editor) {
         category: category.value,
       }));
     };
+
+    let autoSaveTimer;
+    [title, summary, body, category].forEach((field) => {
+      field.addEventListener("input", () => {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+          saveLocalDraft();
+          status.textContent = "브라우저에 임시 저장됨";
+        }, 350);
+      });
+    });
 
     const savePost = async (postStatus) => {
       saveLocalDraft();
@@ -435,6 +515,8 @@ if (editor) {
         });
         if (!result.ok) throw new Error(result.message);
         editId = result.data.post.id;
+        writeCache(`blog-post-${editId}`, result.data.post);
+        removePostCaches();
         history.replaceState(null, "", `write.html?id=${encodeURIComponent(editId)}`);
         status.textContent = result.message;
         if (postStatus === "PUBLISHED") {
@@ -475,14 +557,30 @@ async function loadMyPosts() {
   const list = document.querySelector("#my-posts");
   if (!manager || !list || !storedAuth.token) return;
   manager.hidden = false;
-  list.innerHTML = '<p class="loading-message">내 글을 불러오는 중입니다.</p>';
+  const cachedPosts = readCache("blog-my-posts", CACHE_TTL.myPosts);
+  if (cachedPosts) {
+    renderMyPosts(cachedPosts);
+  } else {
+    list.innerHTML = '<p class="loading-message">내 글을 불러오는 중입니다.</p>';
+  }
 
   try {
     const result = await apiPost({ action: "myPosts", token: storedAuth.token });
     if (!result.ok) throw new Error(result.message);
     const myPosts = result.data.posts || [];
-    list.innerHTML = myPosts.length
-      ? myPosts.map((post) => `
+    writeCache("blog-my-posts", myPosts);
+    renderMyPosts(myPosts);
+  } catch (error) {
+    if (cachedPosts) return;
+    list.innerHTML = `<p class="manage-error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderMyPosts(myPosts) {
+  const list = document.querySelector("#my-posts");
+  if (!list) return;
+  list.innerHTML = myPosts.length
+    ? myPosts.map((post) => `
         <article class="manage-post">
           <div>
             <span class="status-badge ${post.status === "PUBLISHED" ? "published" : ""}">
@@ -495,11 +593,8 @@ async function loadMyPosts() {
             <a class="button secondary" href="write.html?id=${encodeURIComponent(post.id)}">수정</a>
             <button class="button danger" type="button" data-delete-post="${escapeHtml(post.id)}">삭제</button>
           </div>
-        </article>`).join("")
-      : '<div class="empty-manage"><p>아직 작성한 글이 없습니다.</p><a class="button primary" href="write.html">첫 글 쓰기</a></div>';
-  } catch (error) {
-    list.innerHTML = `<p class="manage-error">${escapeHtml(error.message)}</p>`;
-  }
+      </article>`).join("")
+    : '<div class="empty-manage"><p>아직 작성한 글이 없습니다.</p><a class="button primary" href="write.html">첫 글 쓰기</a></div>';
 }
 
 document.querySelector("#my-posts")?.addEventListener("click", async (event) => {
@@ -515,6 +610,7 @@ document.querySelector("#my-posts")?.addEventListener("click", async (event) => 
       id: button.dataset.deletePost,
     });
     if (!result.ok) throw new Error(result.message);
+    removePostCaches(button.dataset.deletePost);
     await loadMyPosts();
   } catch (error) {
     alert(error.message || "게시글을 삭제하지 못했습니다.");
