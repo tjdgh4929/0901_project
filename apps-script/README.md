@@ -25,7 +25,7 @@ Apps Script 상단 함수 목록에서 `setupAuth`를 선택해 한 번 실행�
 현재 프론트엔드에 연결된 배포 URL:
 
 ```text
-https://script.google.com/macros/s/AKfycbxhZSuMXfAafZ-lg5wfv87dnaOFTFDjt54V-LVuMizWhClkRj-bc1NDNZ5MMx6HlSv6oA/exec
+https://script.google.com/macros/s/AKfycbz70Zul59j0MRMdQCPPRFrG3kn1gqg4EHYw_OONJ4HsNpIrDG1w8Uq3kXQyJ6KiAz4l/exec
 ```
 
 ## 4. API 요청
